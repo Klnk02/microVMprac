@@ -51,6 +51,23 @@ for (;;) {
 - **设备 I/O 退出**：guest 执行 `out`/`in` 或 MMIO 碰假设备地址 → 退出（MMIO 靠 EPT 故意不给映射，一碰就拦）→ KVM 打包给用户态 → QEMU/Firecracker 模拟设备 → 再 `KVM_RUN` 还权。
 - **EPT 缺页 / violation**：guest 访问未映射 GPA 或权限不足 → 退出，`exit qualification` 里记 GPA → KVM 判断：真缺页就补 HPA 映射放行；是 MMIO 就转给用户态。
 
+## 补充：碰设备的两种路径（PIO vs MMIO）
+
+CPU 访问设备有两套地址空间：
+
+| | PIO（端口 I/O） | MMIO（内存映射 I/O） |
+|---|---|---|
+| 用哪条指令 | `in` / `out` | `mov` |
+| 访问哪个空间 | 端口空间（65536 个口） | 就是物理地址空间 |
+| 典型设备 | 键盘、串口、老磁盘 | 网卡、PCI、virtio |
+
+两条路径对应两种退出：
+
+- **PIO**：`in`/`out` 是敏感指令，非根模式一执行就退出 → exit reason = I/O 指令退出，qualification 记端口号。
+- **MMIO**：`mov` 是普通指令，靠 host 故意在 EPT 里不留这段 GPA 映射，一碰就 EPT violation → qualification 记 GPA。
+
+> 一句话：PIO 靠「指令本身敏感」拦，MMIO 靠「EPT 故意留洞」拦，殊途同归都变 VM-Exit。
+
 ## 一句话收束
 
 > VM-Exit 的本质，是把「硬件无声的拦截」变成「一次带原因的显式返回」，让用户态 VMM 能在每条导致退出的指令上拿到控制权。VMM 的所有智能都挂在 exit reason 上。
