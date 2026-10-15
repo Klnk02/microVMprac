@@ -49,7 +49,7 @@ ioctl(vcpufd, KVM_RUN);                                // ④ 跑起来，阻塞
 ```
 
 1. `KVM_CREATE_VM`：内核分配一台 VM 的数据结构，返回 `vmfd`，尚无 CPU。
-2. `KVM_SET_USER_MEMORY_REGION`：登记「guest GPA 区间 ↔ 宿主内存」的映射，**本质铺 EPT（GPA→HPA）**。
+2. `KVM_SET_USER_MEMORY_REGION`：登记「guest GPA 区间 ↔ 宿主用户态内存 HVA」的映射。用户态进程碰不到 HPA，所以它传的是自己 `mmap` 出来的虚拟地址 HVA；内核再查**宿主进程页表**把 HVA→HPA，最终铺成 EPT 的 GPA→HPA。**本质铺 EPT**，但中间夹了一层 HVA。
 3. `KVM_CREATE_VCPU`：建好 VMCS、初始化寄存器，返回 `vcpufd`。
 4. `KVM_RUN`：vCPU 跑起来，**阻塞**直到一次 VM-Exit。
 
