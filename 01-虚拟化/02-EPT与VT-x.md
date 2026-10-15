@@ -38,14 +38,23 @@ Intel 硬件虚拟化扩展（AMD-V / SVM）。核心：两套模式。
 - 老办法 shadow page table：hypervisor 维护 GVA→HPA，guest 改页表就要 VM-Exit 重算，慢。
 - EPT：CPU 硬件两层翻译，MMU 一次访问同时走两套四级页表：GVA →（guest 页表）→ GPA →（EPT）→ HPA。
 - guest 改自己页表无需 VM-Exit；hypervisor 用第二层 EPT 隔离。
-- 代价：一次最多 4+4=8 级，靠 TLB / 大页缓解。
+- 代价：一次最多 4+4=8 级，靠 TLB / 大页 / VPID 缓解。
+- EPT 表项权限位：R / W / X（读 / 写 / 执行），**没有 U/S 位**——「用户 / 内核」由 guest 第一层页表处理，EPT 只对整 guest 设权限。
 
 ## 与进程地址空间的区别
 
-同一套「多级页表 + MMU」机制，不同层：
+同一套「多级页表 + MMU」机制，只是作用在不同层、隔离不同对象。
 
-- 进程页表 = OS 隔离进程（VA → PA）。
-- EPT = hypervisor 隔离 guest（GPA → HPA）。
+| 维度 | 进程地址空间 | guest 内存（EPT） |
+|---|---|---|
+| 翻译次数 | 1 次（内部 4 级） | 2 次（各 4 级，共 8 级） |
+| 翻译链 | VA → PA | GVA → GPA → HPA |
+| 谁管理 | OS 内核 | guest OS（第 1 次）+ hypervisor（第 2 次 EPT） |
+| 隔离谁 | 进程 vs 进程；用户 vs 内核 | guest vs guest；guest vs host |
+| 权限位 | 有 U/S | EPT 无 U/S，用 R/W/X 对整 guest |
+
+> [!warning] 别把「级」和「套」搞混
+> 「四级页表」的「级」是**一次翻译内部的深度**（PML4→PDPT→PD→PT）；「EPT 第二层」的「层」是**翻译的次数**。进程 = 1 套表走 4 级；guest = 2 套表各走 4 级 = 8 级。
 
 > [!tip] 一句话
-> guest 之于 host，正如进程之于 OS。
+> guest 之于 host，正如进程之于 OS：进程的「虚拟内存」↔ guest 的「物理内存」，都是假的、私有的；EPT 之于 hypervisor，正如进程页表之于 OS。
