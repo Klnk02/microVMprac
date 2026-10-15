@@ -1,0 +1,68 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 270" width="100%" height="auto" role="img" aria-label="x86-64 四级页表翻译链">
+  <defs>
+    <marker id="pgarr" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="8" markerHeight="8" markerUnits="userSpaceOnUse" orient="auto">
+      <path d="M1 1 L7 4 L1 7 Z" fill="#71717A"/>
+    </marker>
+  </defs>
+  <style>
+    .t { fill: #171717; font-family: system-ui, -apple-system, "PingFang SC", sans-serif; font-size: 14px; }
+    .th { fill: #171717; font-family: system-ui, -apple-system, "PingFang SC", sans-serif; font-size: 14px; font-weight: 600; }
+    .ts { fill: #52525B; font-family: system-ui, -apple-system, "PingFang SC", sans-serif; font-size: 12px; }
+    .bth { fill: #004D26; font-family: system-ui, -apple-system, "PingFang SC", sans-serif; font-size: 14px; font-weight: 600; }
+    .bts { fill: #004D26; font-family: system-ui, -apple-system, "PingFang SC", sans-serif; font-size: 12px; }
+    .arr { stroke: #71717A; stroke-width: 1.5; stroke-linecap: round; fill: none; }
+  </style>
+
+  <rect x="52" y="24" width="104" height="40" rx="8" fill="#F7F7F8" stroke="#D4D4D8"/>
+  <text class="th" x="104" y="49" text-anchor="middle">CR3 寄存器</text>
+  <path class="arr" d="M104 64 L104 70" marker-end="url(#pgarr)"/>
+
+  <rect x="52" y="70" width="104" height="60" rx="8" fill="#F7F7F8" stroke="#D4D4D8"/>
+  <text class="th" x="104" y="96" text-anchor="middle">PML4</text>
+  <text class="ts" x="104" y="114" text-anchor="middle">512 项</text>
+
+  <rect x="180" y="70" width="104" height="60" rx="8" fill="#F7F7F8" stroke="#D4D4D8"/>
+  <text class="th" x="232" y="96" text-anchor="middle">PDPT</text>
+  <text class="ts" x="232" y="114" text-anchor="middle">512 项</text>
+
+  <rect x="308" y="70" width="104" height="60" rx="8" fill="#F7F7F8" stroke="#D4D4D8"/>
+  <text class="th" x="360" y="96" text-anchor="middle">PD</text>
+  <text class="ts" x="360" y="114" text-anchor="middle">512 项</text>
+
+  <rect x="436" y="70" width="104" height="60" rx="8" fill="#F7F7F8" stroke="#D4D4D8"/>
+  <text class="th" x="488" y="96" text-anchor="middle">PT</text>
+  <text class="ts" x="488" y="114" text-anchor="middle">512 项</text>
+
+  <rect x="564" y="70" width="104" height="60" rx="8" fill="#E5FFF2" stroke="#0FDC78"/>
+  <text class="bth" x="616" y="96" text-anchor="middle">物理页</text>
+  <text class="bts" x="616" y="114" text-anchor="middle">4KB</text>
+
+  <path class="arr" d="M156 100 L180 100" marker-end="url(#pgarr)"/>
+  <path class="arr" d="M284 100 L308 100" marker-end="url(#pgarr)"/>
+  <path class="arr" d="M412 100 L436 100" marker-end="url(#pgarr)"/>
+  <path class="arr" d="M540 100 L564 100" marker-end="url(#pgarr)"/>
+
+  <text class="ts" x="360" y="166" text-anchor="middle">48 位虚拟地址如何拆分</text>
+
+  <rect x="52" y="176" width="115.5" height="40" fill="#F7F7F8" stroke="#D4D4D8"/>
+  <text class="ts" x="109.75" y="194" text-anchor="middle">PML4</text>
+  <text class="t" x="109.75" y="210" text-anchor="middle">9</text>
+
+  <rect x="167.5" y="176" width="115.5" height="40" fill="#F7F7F8" stroke="#D4D4D8"/>
+  <text class="ts" x="225.25" y="194" text-anchor="middle">PDPT</text>
+  <text class="t" x="225.25" y="210" text-anchor="middle">9</text>
+
+  <rect x="283" y="176" width="115.5" height="40" fill="#F7F7F8" stroke="#D4D4D8"/>
+  <text class="ts" x="340.75" y="194" text-anchor="middle">PD</text>
+  <text class="t" x="340.75" y="210" text-anchor="middle">9</text>
+
+  <rect x="398.5" y="176" width="115.5" height="40" fill="#F7F7F8" stroke="#D4D4D8"/>
+  <text class="ts" x="456.25" y="194" text-anchor="middle">PT</text>
+  <text class="t" x="456.25" y="210" text-anchor="middle">9</text>
+
+  <rect x="514" y="176" width="154" height="40" fill="#EFEFF2" stroke="#D4D4D8"/>
+  <text class="ts" x="591" y="194" text-anchor="middle">页内偏移</text>
+  <text class="t" x="591" y="210" text-anchor="middle">12</text>
+
+  <text class="ts" x="360" y="240" text-anchor="middle">每级索引 512 项（2^9）；末 12 位是页内偏移</text>
+</svg>

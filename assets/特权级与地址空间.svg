@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 280" width="100%" height="auto" role="img" aria-label="特权级与地址空间两个正交维度">
+  <style>
+    .ttl { fill: #171717; font-family: system-ui, -apple-system, "PingFang SC", sans-serif; font-size: 15px; font-weight: 600; }
+    .body { fill: #171717; font-family: system-ui, -apple-system, "PingFang SC", sans-serif; font-size: 14px; }
+    .cap { fill: #52525B; font-family: system-ui, -apple-system, "PingFang SC", sans-serif; font-size: 12px; }
+    .btl { fill: #004D26; font-family: system-ui, -apple-system, "PingFang SC", sans-serif; font-size: 15px; font-weight: 600; }
+    .bdy { fill: #004D26; font-family: system-ui, -apple-system, "PingFang SC", sans-serif; font-size: 14px; }
+  </style>
+
+  <rect x="40" y="40" width="310" height="140" rx="10" fill="#F7F7F8" stroke="#D4D4D8"/>
+  <text class="ttl" x="56" y="70">特权级 · CPL（CPU 的身份）</text>
+  <text class="body" x="56" y="96">Ring 3 → 用户态</text>
+  <text class="body" x="56" y="116">Ring 0 → 内核态</text>
+  <text class="cap" x="56" y="140">身份写在 CS 寄存器低 2 位</text>
+
+  <rect x="370" y="40" width="310" height="140" rx="10" fill="#F7F7F8" stroke="#D4D4D8"/>
+  <text class="ttl" x="386" y="70">地址空间 · 页表（内存的墙）</text>
+  <text class="body" x="386" y="96">虚拟地址 → 物理地址</text>
+  <text class="body" x="386" y="116">每页 U/S 位：用户=1 / 内核=0</text>
+  <text class="cap" x="386" y="140">翻译由 MMU 完成</text>
+
+  <rect x="40" y="200" width="640" height="60" rx="10" fill="#E5FFF2" stroke="#0FDC78"/>
+  <text class="btl" x="56" y="226">汇合点：MMU 拿 CPL 去比页的 U/S 位</text>
+  <text class="bdy" x="56" y="246">用户（CPL=3）访问内核页（U/S=0）→ 拒绝</text>
+</svg>
