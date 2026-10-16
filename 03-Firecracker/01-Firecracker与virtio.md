@@ -77,4 +77,17 @@ guest 写 `[0x0]` 与 Firecracker 写 `*(0x7f00_0000)`，落的是同一块物�
 
 **融会贯通**：这跟 Linux 里"两个进程靠 mmap 共享内存"是同一原理——同一物理页被两个页表项映射，虚拟化只是把其中一套页表换成 EPT、把其中一个进程换成整台 guest。
 
+## 进阶：vhost 内核加速
+
+纯 virtio 的"绕路"：数据要爬到用户态 Firecracker 进程，再由它调 syscall 送回内核，多一次用户态↔内核态切换 + 一次跨态拷贝。
+
+**vhost = virtio host accelerator（virtio 宿主端内核加速器）**：把 virtio 后端从用户态下沉进内核，数据在 guest ↔ 宿主内核之间直通。
+
+| | 数据路径 | 用户态往返 |
+|---|---|---|
+| 纯 virtio | guest → virtqueue → 用户态 Firecracker → 内核 → 设备 | 有（+ 拷贝） |
+| vhost | guest → virtqueue → 内核 vhost 线程 → 设备 | 无，内核直通 |
+
+拓展：**vhost-user** 是第三种选择——后端放进独立用户态进程，靠共享内存直连 guest，可独立更新。
+
 参见 [[02-VMExit内幕-退出原因与分流]]、[[01-KVM原理-设备节点与ioctl]]。
