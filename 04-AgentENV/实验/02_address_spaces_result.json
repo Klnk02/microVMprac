@@ -1,0 +1,17 @@
+{
+  "experiment": "lesson02_two_ordinary_processes_not_real_agentenv",
+  "environment": {
+    "os": "Linux",
+    "kernel": "6.6.87.2-microsoft-standard-WSL2"
+  },
+  "parent_pid": 586,
+  "child_pid": 673,
+  "parent_virtual_address": "0x777267e87000",
+  "child_virtual_address": "0x777267e87000",
+  "copy_bytes": 64,
+  "parent_pwrite_using_same_va_number": "SERVER_PARENT",
+  "parent_pvm_then_pwrite": "CHILD_GUEST_DATA",
+  "child_pwrite_using_its_own_va": "CHILD_GUEST_DATA",
+  "file_backend": "anonymous memfd; no physical disk result",
+  "result": "PASS"
+}

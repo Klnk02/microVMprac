@@ -10,6 +10,10 @@
 
 长期方向与阶段验收见：[[Agentic-Infra长期竞争力与2027春季求职计划]]（目标求职窗口：2027 年 3—4 月）。
 
+Firecracker 官方设计文档的中文学习导读：[[Firecracker设计文档-中文导读]]。
+
+2026-10-23 起，基于 AgentENV 按课学习：[[04-AgentENV/00-学习计划|28 课详细计划]] → [[04-AgentENV/01-系统地图与第一课|系统地图与第一课]]。当前进度与答题证据记录在 [[04-AgentENV/学习记录]]，固定版本入口见 [[04-AgentENV/源码索引]]。
+
 1. **Linux 操作系统基础** —— 进程、特权级、系统调用、内存与页表
 2. **虚拟化核心概念** —— VM vs 容器、Hypervisor、Type 1/2
 3. **KVM 原理** —— 内核如何变成 hypervisor、KVM 与 QEMU 的分工
@@ -24,6 +28,7 @@
 | `00-Linux基础/` | 第一层：Linux 地基 |
 | `assets/` | 笔记引用的示意图（SVG） |
 | `01-虚拟化/` `02-KVM/` … | 后续按路线逐层新增 |
+| `04-AgentENV/` | 系统地图、逐课计划、源码导航与学习记录 |
 
 > [!note] Obsidian
 > 本仓库同时是 Obsidian 库 `D:\learning\Learning` 的子目录，笔记可在 Obsidian 中直接阅读（支持 wikilink、callout、SVG 嵌入）。
