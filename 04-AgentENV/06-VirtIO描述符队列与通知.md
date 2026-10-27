@@ -85,4 +85,8 @@ Firecracker Guest RAM 映射
 
 用户已询问描述符组成、缓冲区为何重复发布、VirtIO 与普通内存写入及快照路径的边界，并概括 VirtIO 用于虚拟设备交互。上述内容已讲解，尚未通过独立完整流程推演。
 
-下一题：设备一次收到通知，处理一项后发现可用环还有两项，是否必须等两次新通知才能继续？请结合“队列记录”和“通知”的分工解释。之后再按理解进度进入具体通知机制或请求控制路径。
+2026-10-27：用户正确判断已取走条目不代表完成、eventfd 是提醒而需回读 virtqueue；已补讲 split 可用环发布位置、设备消费位置与已用环 id/len、used.idx，以及两个环是不同区域。用户曾将设备通知误认为通知可用环，已纠正为通知 Guest 驱动，由驱动处理后再决定复用。
+
+Guest→设备的示例路径是 MMIO 通知写入 → KVM 匹配 ioeventfd → Firecracker 事件处理；设备→Guest 的示例路径是设备发布完成记录 → 必要时通过 irqfd 和 KVM 触发虚拟中断 → Guest 驱动检查已用环。依据 [上游设备注册代码](https://github.com/firecracker-microvm/firecracker/blob/main/src/vmm/src/device_manager/mmio.rs)、[上游中断实现](https://github.com/firecracker-microvm/firecracker/blob/main/src/vmm/src/devices/virtio/transport/mmio.rs) 与 [VirtIO 1.2 已用环](https://docs.oasis-open.org/virtio/virtio/v1.2/virtio-v1.2.html)；上游 main 不代表已核对部署版本。
+
+用户曾认为设备在 vCPU 暂停时发布完成记录意味着 Guest 已处理，已讲清设备完成、Guest 得知和 Guest 处理完成是不同阶段；尚未取得纠正后的独立复述。第 06 课仍为学习中；当前接续转到 [第 07 课](07-请求控制路径.md)。
