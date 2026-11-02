@@ -90,3 +90,31 @@ Firecracker Guest RAM 映射
 Guest→设备的示例路径是 MMIO 通知写入 → KVM 匹配 ioeventfd → Firecracker 事件处理；设备→Guest 的示例路径是设备发布完成记录 → 必要时通过 irqfd 和 KVM 触发虚拟中断 → Guest 驱动检查已用环。依据 [上游设备注册代码](https://github.com/firecracker-microvm/firecracker/blob/main/src/vmm/src/device_manager/mmio.rs)、[上游中断实现](https://github.com/firecracker-microvm/firecracker/blob/main/src/vmm/src/devices/virtio/transport/mmio.rs) 与 [VirtIO 1.2 已用环](https://docs.oasis-open.org/virtio/virtio/v1.2/virtio-v1.2.html)；上游 main 不代表已核对部署版本。
 
 用户曾认为设备在 vCPU 暂停时发布完成记录意味着 Guest 已处理，已讲清设备完成、Guest 得知和 Guest 处理完成是不同阶段；尚未取得纠正后的独立复述。第 06 课仍为学习中；当前接续转到 [第 07 课](07-请求控制路径.md)。
+
+## 6. 环的记录、进度与复用
+
+下面是 split virtqueue 的普通逐链完成示例，不涉及 IN_ORDER 批量完成优化。队列大小假设为 16：
+
+```text
+avail.ring[0] = 3
+avail.ring[1] = 7
+avail.ring[2] = 9
+avail.idx     = 3       // 共发布三项，下一发布槽位是 3
+设备消费位置 = 2       // 已领取前两项，剩链头 9 未领取
+```
+
+取走条目通常只推进消费位置，不清空槽位；槽位残留数字不表示新任务。索引是有限宽计数器，槽位按位置对队列大小取模；处理回绕要遵守协议，不能只作无限整数比较。
+
+已用环每条记录是两个 32 位字段：id（完成链的链头编号）和 len（设备向可写缓冲区写入的字节数），不是缓冲区容量。设备完成链头 7 并写入 1000 字节时，可以先写 used.ring[0] = {id:7,len:1000}，按规定内存顺序发布 used.idx = 1，再必要时通知 Guest。Guest 用自己的已用环消费位置发现新完成项。
+
+描述符表、可用环和已用环占不同、不重叠的字节区域；可以在一块大分配里分区，也可以按接口规则分开放置。实际数据缓冲区可以在其他 Guest 内存位置。
+
+发布到 avail 后，Guest 按协议将缓冲区交设备使用；设备领取不等于完成，不能因此提前复用。收到 used 后，Guest 驱动检查结果、处理数据，确认能复用时再发布到 avail。交接是协议约定，不代表每次撤销页表映射。
+
+## 7. 一次 VirtIO 块读取
+
+典型 virtio-blk 读链包含设备可读的请求头（操作和磁盘扇区位置）、设备可写的数据缓冲区、设备可写的请求状态区域。队列描述的是整条链，不仅是一块收包 buffer。设备状态需检查；used.len 不能代替块请求的成功/失败状态。
+
+Guest 内存的缓冲区地址与磁盘逻辑地址是不同字段。参考 [VirtIO 1.2](https://docs.oasis-open.org/virtio/virtio/v1.2/virtio-v1.2.html) 的 split virtqueue 与 Block Device 章节。
+
+自测：①设备领取后、发布完成前，Guest 能否复用缓冲区？②一次提醒后队列还有工作，是否必须再等一次提醒？③Guest 暂停时设备已发布完成，是否代表 Guest 驱动已处理？
