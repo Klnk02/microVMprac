@@ -106,3 +106,26 @@
 | 组合结果 | A | X | 全零 | 全零 |
 
 位置 0 回落到父层；位置 2 由新层显式零遮住父层 C；位置 3 所有层均无映射，按该只读逻辑镜像的空洞语义返回零。三者虽然有时结果都为零，索引语义仍不同。后端读取失败属于错误，不能冒充空洞。
+
+## 精讲：它到底是什么
+
+名称是 OverlayBD，BD 可理解为 Block Device（块设备），不是 OverlayDB 数据库。在本课固定 AgentENV 中，storage/overlaybd 是 Rust crate：进程链接并调用的一组代码，同时定义/处理层镜像格式。运行时对象、持久化镜像和对外设备是三个东西：
+
+| 对象 | 性质 |
+|---|---|
+| overlaybd crate | 实现分层逻辑字节视图的库 |
+| ImageFile 等对象 | 某个进程内的运行时状态、索引与后端句柄 |
+| 镜像配置、层文件 | 描述层顺序并存放数据/索引的持久化产物 |
+| /dev/ublkbN | ublk 内核驱动与用户态服务合作暴露的块设备，不是 OverlayBD 库文件本身 |
+
+对调用者的基本能力可先理解为 read_at(logical_offset,len) 与 write_at(logical_offset,data)。它不以 Guest 文件名为主要读取接口，不解释 Guest 进程寄存器，不负责 KVM 执行。
+
+索引项在概念上描述：逻辑起点、长度、来源层、来源数据位置及是否显式零。这里的物理/实际 offset 是存储格式中的位置，不是 CPU 的 HPA。某些层还包有压缩格式，逻辑读取可能需要额外地址转换、解压和校验，不可把整份文件画成一个固定且唯一的字节布局。
+
+可写镜像把更新放到 upper；底部已发布层保持只读，可供多个实例使用。封存当前 upper 形成新的只读层、再打开新 upper，可以继续记录未来变化。内存层可由专门转换逻辑直接生成，不要求其先经历磁盘运行时 upper 的全部流程。层封存不自动等于整台 VM 的快照事务完成。
+
+磁盘用途：Guest 文件系统→VirtIO→Firecracker→ublk→daemon/OverlayBD→层数据。内存用途：捕获时将选择的 Guest RAM 字节写成内存层；恢复时用只读 ublk 内存镜像作为 Firecracker 内存映射后端。后者访问的是 RAM 后端，不等于 Guest 通过 VirtIO 读 rootfs。
+
+与 OverlayFS 区别：OverlayFS 在文件/目录层面叠加，OverlayBD 主要按逻辑块/字节范围叠加；分层块镜像里可以承载 ext4 内容，也可以承载按逻辑偏移组织的内存快照字节。与数据库区别：内部存在索引、日志结构或合并操作，不代表它提供 SQL、记录查询或通用数据库事务。
+
+本轮重新核对 [Cargo.toml](https://github.com/kvcache-ai/AgentENV/blob/9f62cbe07cebfecf416dc9bdcf497e2a97687644/storage/overlaybd/Cargo.toml)、[lib.rs](https://github.com/kvcache-ai/AgentENV/blob/9f62cbe07cebfecf416dc9bdcf497e2a97687644/storage/overlaybd/src/lib.rs) 和 image/image_file.rs 的公开接口。VirtualFile 是统一读写接口；ProcessVmReader 是捕获来源适配器，不能据 trait 相同就把远程内存地址当作层文件偏移。
