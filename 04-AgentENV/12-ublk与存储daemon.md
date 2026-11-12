@@ -154,6 +154,54 @@ Guest 驱动处理结果
 
 用户课末回答证据：①知道领取任务后还要查找；校准为 OverlayBD 查询数据映射并取得字节，而非查找事件。②正确判断缓存命中不必再读取磁盘。两项是局部独立作答，不等于实测或全实现验收。
 
+## 九、2026-11-12 全景微观读路径补讲
+
+本段为教学模型。普通 pread 读取 4 KiB，假定 ext4 元数据已可用、Guest 文件缓存未命中，磁盘后端为 ublk，采用 VirtIO split queue 和传统 ublk per-IO 命令。后端 READ 使用 io_uring 为选定示例，具体 AgentENV 接法仍需核验；无真实 IO 测量。
+
+### 准备阶段与四块 buffer
+
+AgentENV server 请求存储 daemon 准备磁盘，并把 Host /dev/ublkbN 配置给 Firecracker。daemon 建立 io_uring、映射 ublk 请求描述区，并为请求槽预挂 FETCH。普通磁盘数据路径由 Firecracker、Host 内核和 daemon 执行；server 的快照 PVM 捕获属于另一条路径。
+
+| 标记 | 所在进程或地址空间 | 本例用途 |
+|---|---|---|
+| U | Guest 用户进程 | pread 的用户 buffer |
+| G | Guest 内核管理的 RAM | 接收块读内容的文件缓存页；通过 GPA 描述 |
+| H | Host Firecracker | 本例选用的后端中转 buffer |
+| B | Host 存储 daemon | ublk 数据 buffer |
+
+Firecracker 可通过其宿主映射访问 G。实际后端可以直接读入 Guest RAM，不应把示例 H 的存在或固定复制次数当成所有实现的要求。
+
+### 一次读取的十二步
+
+1. daemon 为 qid=0/tag=7 槽位提交 URING_CMD/FETCH_REQ，等待任务；槽位标识在途 IO，结束后可复用。
+2. Guest 程序 pread，文件偏移 8 MiB、长度 4096；文件系统解析到虚拟磁盘偏移 40 MiB。所有偏移均为课堂假设。
+3. Guest 驱动准备描述符链 3→4→5，分别指向请求头、设备可写的 G、设备可写的状态字节。
+4. 驱动发布链头 3 到 avail 并按协议更新 idx/内存顺序，必要时写 MMIO QueueNotify。该寄存器提示检查队列，payload 仍在 buffer 中。
+5. KVM 按设备访问配置处理通知，可经 ioeventfd 通知后端。VM-Exit 不必使 KVM_RUN 返回 Firecracker 用户态。后端事件循环读取队列，解析请求与 Guest buffer。
+6. Firecracker 对 /dev/ublkbN 提交读 40 MiB / 4 KiB 到 H 的后端操作。ublk 驱动将该请求安排给可用槽，假设为 qid=0/tag=7。
+7. 驱动填写共享 ublk 请求描述，并完成此前挂着的 FETCH 命令。daemon 从 CQ 识别领取操作后，用 qid/tag 查请求描述；此时 B 尚未取得目标字节。
+8. daemon 调用 OverlayBD，假设索引回落父层，映射到层文件偏移 12 MiB。库在 daemon 内执行。
+9. 本例提交后端 READ SQE，给出层 fd、12 MiB、B、4096 和关联 user_data；内核取得字节写入 B 后发布 READ CQE。需要检查短读和负错误码；缓存命中则可省去新增介质读取。
+10. 数据完整后 daemon 用 COMMIT_AND_FETCH_REQ 提交槽 7 的结果。传统复制模式下驱动把 B 内容交付给块请求页面，完成旧块请求，同时让槽继续等后续任务；合并命令后续 CQE 可能要等新任务到达。
+11. Firecracker 后端读完成，示例把 H 内容写到 G，设置块请求状态，再发布 used 中的链头 3 并按需通知。Guest 驱动检查 used 与设备状态，文件系统完成缓存页 IO。
+12. Guest 读取线程把 G 内容复制到 U，pread 成功返回 4096。EOF、信号和错误时应按实际结果解释。
+
+### 三套身份与完成条件
+
+| 身份/事件 | 含义 |
+|---|---|
+| VirtIO 链头 3 | 关联 Guest 驱动与虚拟设备的请求 |
+| ublk qid=0/tag=7 | 关联 Host 块请求和 daemon 请求槽；不能与链头编号互换 |
+| io_uring user_data | 由提交者设置，用于辨认领取命令或后端读取等操作 |
+| FETCH CQE | 领取任务完成 |
+| 后端 READ CQE | 检查结果后判断实际读取到的字节数或错误 |
+| VirtIO used + 成功状态 | 虚拟设备读完成；Guest 上层仍需处理 |
+| pread 返回 4096 | U 已获得本次成功读取的字节 |
+
+### 下次复习
+
+优先独立串联角色、队列、地址与三个完成边界；换成后端 READ 失败、Guest 缓存命中、后端缓存命中场景预测结果。再进入性能度量，分开测量排队、读盘与完成处理。具体接续见 [学习记录](学习记录.md#下一步复习入口2026-11-12)。
+
 ## 源码锚点
 
 - [main.rs](https://github.com/kvcache-ai/AgentENV/blob/9f62cbe07cebfecf416dc9bdcf497e2a97687644/storage/ublk-daemon/src/main.rs)
