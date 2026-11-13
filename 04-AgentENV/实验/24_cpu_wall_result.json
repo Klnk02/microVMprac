@@ -1,0 +1,107 @@
+{
+  "measured_at": "2026-11-13T03:36:53.707Z",
+  "platform": "win32",
+  "release": "10.0.26200",
+  "runtime": "v24.21.0",
+  "logical_cpus": 20,
+  "scope": "One Node process, including its runtime threads; agent-run Windows demonstration, not Linux perf or microVM IO.",
+  "wait_ms": 500,
+  "checksum": 0,
+  "samples": [
+    {
+      "name": "compute",
+      "round": 1,
+      "wall_ms": 105.2968,
+      "user_cpu_ms": 93,
+      "system_cpu_ms": 15,
+      "process_cpu_ms": 108
+    },
+    {
+      "name": "sleep",
+      "round": 1,
+      "wall_ms": 507.75509999999997,
+      "user_cpu_ms": 0,
+      "system_cpu_ms": 0,
+      "process_cpu_ms": 0
+    },
+    {
+      "name": "busy_poll",
+      "round": 1,
+      "wall_ms": 500.0852000000001,
+      "user_cpu_ms": 485,
+      "system_cpu_ms": 16,
+      "process_cpu_ms": 501
+    },
+    {
+      "name": "compute",
+      "round": 2,
+      "wall_ms": 105.30759999999987,
+      "user_cpu_ms": 109,
+      "system_cpu_ms": 0,
+      "process_cpu_ms": 109
+    },
+    {
+      "name": "sleep",
+      "round": 2,
+      "wall_ms": 505.5644,
+      "user_cpu_ms": 0,
+      "system_cpu_ms": 0,
+      "process_cpu_ms": 0
+    },
+    {
+      "name": "busy_poll",
+      "round": 2,
+      "wall_ms": 500.0157999999999,
+      "user_cpu_ms": 484,
+      "system_cpu_ms": 16,
+      "process_cpu_ms": 500
+    },
+    {
+      "name": "compute",
+      "round": 3,
+      "wall_ms": 104.0969,
+      "user_cpu_ms": 110,
+      "system_cpu_ms": 0,
+      "process_cpu_ms": 110
+    },
+    {
+      "name": "sleep",
+      "round": 3,
+      "wall_ms": 507.15499999999975,
+      "user_cpu_ms": 0,
+      "system_cpu_ms": 0,
+      "process_cpu_ms": 0
+    },
+    {
+      "name": "busy_poll",
+      "round": 3,
+      "wall_ms": 500.0162,
+      "user_cpu_ms": 312,
+      "system_cpu_ms": 187,
+      "process_cpu_ms": 499
+    }
+  ],
+  "summary": [
+    {
+      "name": "compute",
+      "n": 3,
+      "mean_wall_ms": 104.9004333333333,
+      "mean_process_cpu_ms": 109,
+      "cpu_per_wall_percent": 103.90805503504438
+    },
+    {
+      "name": "sleep",
+      "n": 3,
+      "mean_wall_ms": 506.8248333333333,
+      "mean_process_cpu_ms": 0,
+      "cpu_per_wall_percent": 0
+    },
+    {
+      "name": "busy_poll",
+      "n": 3,
+      "mean_wall_ms": 500.0390666666667,
+      "mean_process_cpu_ms": 500,
+      "cpu_per_wall_percent": 99.99218727710074
+    }
+  ]
+}
