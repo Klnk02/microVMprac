@@ -1,0 +1,258 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>全链路走查：Guest 读一个 4 KiB 文件块</title>
+<style>
+  :root { --bg:#0f1216; --panel:#171c22; --line:#2b333d; --text:#e6edf3; --dim:#8b98a5; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--text);
+         font-family:"Microsoft YaHei","Segoe UI",system-ui,sans-serif; }
+  .wrap { max-width:1080px; margin:0 auto; padding:18px 18px 30px; }
+  h1 { font-size:17px; margin:0 0 6px; font-weight:600; }
+  .scene { border:1px dashed var(--line); border-radius:6px; padding:10px 12px; font-size:12.5px;
+           line-height:1.8; color:var(--dim); margin-bottom:14px; }
+  .scene b { color:var(--text); }
+  .main { display:grid; grid-template-columns: 300px 1fr; gap:12px; align-items:start; }
+  .stack { border:1px solid var(--line); border-radius:8px; background:var(--panel); padding:10px; }
+  .st { border:1px solid var(--line); border-radius:6px; padding:7px 9px; font-size:12px;
+        cursor:pointer; transition:all .22s; margin-bottom:4px; }
+  .st.on { border-color:#58a6ff; background:#1f6feb22; }
+  .st .who { font-size:10.5px; color:var(--dim); }
+  .sep { text-align:center; color:var(--dim); font-size:10px; margin:2px 0; }
+  .card { border:1px solid var(--line); border-radius:8px; background:var(--panel); padding:14px; }
+  .card h2 { font-size:15px; margin:0 0 10px; }
+  .kv { font-size:12.5px; line-height:1.9; color:var(--dim); }
+  .kv b { color:var(--text); font-weight:600; }
+  .done { margin-top:10px; border-left:3px solid #2ea043; background:#0d1117; padding:8px 12px;
+          font-size:12.5px; line-height:1.8; border-radius:4px; }
+  .myth { margin-top:8px; border-left:3px solid #f0883e; background:#0d1117; padding:8px 12px;
+          font-size:12.5px; line-height:1.8; border-radius:4px; }
+  .bar { display:flex; gap:8px; align-items:center; margin:12px 0; }
+  button { background:#21262d; color:var(--text); border:1px solid var(--line); border-radius:6px;
+           padding:6px 13px; font-size:13px; cursor:pointer; }
+  button:hover { border-color:#58a6ff; } button:disabled { opacity:.4; }
+  .prog { margin-left:auto; font-size:12px; color:var(--dim); }
+  .state { margin-top:12px; border:1px solid var(--line); border-radius:6px; padding:9px 12px;
+           font-size:12px; color:var(--dim); line-height:1.9; }
+  .state b { color:#79c0ff; font-family:Consolas,monospace; font-size:11.5px; }
+  .mono { font-family:Consolas,monospace; font-size:12px; }
+  .foot { color:var(--dim); font-size:11px; margin-top:14px; line-height:1.8; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>全链路走查：Guest 读 <span class="mono">/workspace/data.bin</span> 的 4 KiB</h1>
+  <div class="scene">
+    <b>场景</b>：microVM 里的 Python 执行 <span class="mono">f.seek(8&lt;&lt;20); f.read(4096)</span>，Guest 页缓存未命中，需要从虚拟磁盘取数据。<br>
+    <b>前提</b>：Guest 的 <span class="mono">/dev/vda</span> 由 Firecracker 挂在宿主的 <span class="mono">/dev/ublkbN</span> 上，后者由 ublk-daemon + OverlayBD 提供数据。<br>
+    <b>看什么</b>：每一步的「完成」只代表那一层做完了自己的事——这是整条链最容易混的地方。
+  </div>
+
+  <div class="bar">
+    <button id="prev">上一步</button><button id="next">下一步</button>
+    <button id="play">播放</button><button id="reset">重置</button>
+    <span class="prog" id="prog"></span>
+  </div>
+
+  <div class="main">
+    <div class="stack">
+      <div class="st" id="st-app">Guest 用户态<div class="who">python：read()</div></div>
+      <div class="sep">▼</div>
+      <div class="st" id="st-vfs">Guest 内核<div class="who">VFS 页缓存 / ext4</div></div>
+      <div class="sep">▼</div>
+      <div class="st" id="st-virtio">Guest VirtIO 前端<div class="who">描述符 + avail ring + doorbell</div></div>
+      <div class="sep">▼ 硬件：VM-Exit ▼</div>
+      <div class="st" id="st-fc">宿主用户态：Firecracker<div class="who">vCPU 线程 / 设备模型</div></div>
+      <div class="sep">▼</div>
+      <div class="st" id="st-ublk">宿主内核：ublk 驱动<div class="who">/dev/ublkbN 请求队列</div></div>
+      <div class="sep">▼ io_uring ▼</div>
+      <div class="st" id="st-daemon">宿主用户态：ublk-daemon<div class="who">URING_CMD 领取 / 提交完成</div></div>
+      <div class="sep">▼</div>
+      <div class="st" id="st-obd">OverlayBD（库）<div class="who">查索引 → 定层 → 定偏移</div></div>
+      <div class="sep">▼</div>
+      <div class="st" id="st-disk">层文件 / 缓存<div class="who">真正的字节</div></div>
+    </div>
+
+    <div>
+      <div class="card" id="card"></div>
+      <div class="state" id="state"></div>
+    </div>
+  </div>
+
+  <div class="foot">
+    说明：逻辑偏移、LBA、tag、队列号均为课堂取值，不代表实测；本页是静态走查，不是真实 trace。
+  </div>
+</div>
+
+<script>
+const steps = [
+  { node:'st-app', title:'① Guest 应用发起 read()',
+    kv:[['执行主体','Guest 用户态进程（python）'],
+        ['动作','<span class="mono">seek(8 MiB)</span> 后 <span class="mono">read(fd, buf, 4096)</span>'],
+        ['关键参数','fd、本地缓冲区地址（GVA）、长度 4096'],
+        ['所在层','Guest']],
+    done:'这一步没有任何“完成”——它只是发起。read() 返回之前，一切都还没发生。',
+    myth:'常见误解：以为 read() 一调用就“进入宿主”。实际上先完全在 Guest 内核里处理，宿主根本不知道。',
+    state:{'文件偏移':'8 MiB (0x800000)','长度':'4096 B','Guest 页缓存':'未命中（假设）'} },
+
+  { node:'st-vfs', title:'② Guest 内核：先查页缓存，未命中',
+    kv:[['执行主体','Guest 内核（VFS + 具体文件系统）'],
+        ['动作','按文件 inode + 偏移查页缓存；未命中 → 生成块 IO 请求'],
+        ['关键换算','文件偏移 → extent → <b>逻辑块地址 LBA</b>（文件偏移 ≠ 磁盘偏移）'],
+        ['所在层','Guest 内核']],
+    done:'“算出 LBA”只是算出一个地址，没有任何字节被读取。',
+    myth:'常见误解：以为文件偏移 8 MiB 就等于磁盘偏移 8 MiB。中间隔着文件系统的 extent 映射。',
+    state:{'文件偏移':'8 MiB','LBA':'LBA=0x4000（假设）','扇区数':'8 × 512 B','页缓存':'miss'} },
+
+  { node:'st-virtio', title:'③ Guest 提交 VirtIO 块请求',
+    kv:[['执行主体','Guest VirtIO 块驱动'],
+        ['动作','填描述符链（header / data / status）→ 写 avail ring 的 tail → 敲 doorbell（MMIO 写）'],
+        ['关键参数','desc 索引、buffer 是 Guest RAM 里的地址、操作 READ'],
+        ['所在层','Guest 内核 → 硬件']],
+    done:'这一步的完成只是“提交成功”。数据一个字节都没取回。',
+    myth:'常见误解：把“写进 avail ring”当成“设备已经开始读”。设备读不读，要等它取走描述符。',
+    state:{'avail tail':'1（提交一条）','used tail':'0（还没完成）','doorbell':'已敲'} },
+
+  { node:'st-fc', title:'④ 硬件：doorbell 触发 VM-Exit',
+    kv:[['执行主体','CPU（非根模式）+ KVM'],
+        ['动作','<span class="mono">mov</span> 写到 MMIO 地址 → EPT 缺映射 → VM-Exit；KVM 填 <span class="mono">kvm_run-&gt;mmio</span>'],
+        ['关键参数','exit_reason = KVM_EXIT_MMIO，addr/len/is_write'],
+        ['所在层','guest → 硬件 → 宿主内核']],
+    done:'“退出到宿主”只是把控制权交出来，不代表设备已经处理了请求。',
+    myth:'常见误解：以为 guest 执行了特权指令。触发点是 EPT 缺映射，指令本身是普通 mov。',
+    state:{'退出原因':'KVM_EXIT_MMIO','目标':'virtio-mmio 通知寄存器','vCPU 线程':'被唤醒处理'} },
+
+  { node:'st-fc', title:'⑤ Firecracker 处理这次 MMIO，看到队列有新请求',
+    kv:[['执行主体','Firecracker 的 vCPU 线程 → 设备模型'],
+        ['动作','<span class="mono">mmio_bus.write</span> → 通知 virtio 后端 → 从 Guest RAM 读 avail ring，取出描述符链'],
+        ['关键参数','描述符里的 buffer 是 Guest RAM 的 GPA（后端要知道它在宿主哪块内存）'],
+        ['所在层','宿主用户态']],
+    done:'“取到描述符”= 知道要读哪里、多长。仍然没有数据。',
+    myth:'常见误解：以为 doorbell 里带着包或数据。doorbell 只说明“有活”，数据在共享队列里。',
+    state:{'取下 desc':'1 条','请求':'READ，LBA=0x4000，4096 B','后端':'/dev/ublkbN'} },
+
+  { node:'st-ublk', title:'⑥ Firecracker 把请求打到后端块设备',
+    kv:[['执行主体','Firecracker（宿主用户态）'],
+        ['动作','对 <span class="mono">/dev/ublkbN</span> 发起一次块读（4 KiB @ LBA×512）'],
+        ['所在层','宿主用户态 → 宿主内核']],
+    done:'请求“进入”内核 ≠ 数据已到。',
+    myth:'常见误解：以为 Firecracker 自己知道盘上数据在哪。它只认识“一块设备”。',
+    state:{'设备':'/dev/ublkbN（只读或读写视用途）','偏移':'0x4000 × 512','长度':'4096 B'} },
+
+  { node:'st-ublk', title:'⑦ ublk 驱动组织请求，放进设备队列',
+    kv:[['执行主体','宿主内核 ublk 驱动'],
+        ['动作','生成请求描述：queue_id、tag、op=READ、逻辑偏移、长度；放入该设备的队列'],
+        ['关键参数','<b>tag</b> = 队列内编号，用来把“完成”对回“请求”'],
+        ['所在层','宿主内核']],
+    done:'请求“已入队”。此时没有任何人保证它会被处理——要看 daemon 在不在。',
+    myth:'常见误解：以为内核会自己填数据。ublk 的内核侧只负责交接，内容由用户态决定。',
+    state:{'queue_id':'0','tag':'7（假设）','op':'READ','状态':'已入队，等 daemon 领取'} },
+
+  { node:'st-daemon', title:'⑧ daemon 收到 CQE：请求已交付',
+    kv:[['执行主体','ublk-daemon（宿主用户态进程）'],
+        ['动作','之前提交的 <span class="mono">UBLK_IO_FETCH_REQ</span> 命令完成，CQE 里带回请求描述'],
+        ['关键语义','<b>这条 CQE 表示“请求送到了”</b>，不表示数据读完'],
+        ['所在层','宿主用户态']],
+    done:'到这里只完成了“交接”。数据还在后面几层。',
+    myth:'最常见误解：看到 CQE 就以为 IO 完成。CQE 的含义取决于它对应的提交操作是什么。',
+    state:{'CQE 对应':'FETCH_REQ','带回':'queue=0, tag=7, READ, 4096 B','数据':'尚无'} },
+
+  { node:'st-obd', title:'⑨ daemon 问 OverlayBD：这段逻辑范围的数据在哪',
+    kv:[['执行主体','daemon 进程内调用 OverlayBD 库'],
+        ['动作','<span class="mono">read_at(逻辑偏移, 长度)</span> → 从上往下查各层索引'],
+        ['关键点','<b>逻辑偏移 ≠ 层内偏移</b>；可能跨段、可能是显式零、可能是空洞'],
+        ['所在层','宿主用户态（库，不是服务）']],
+    done:'“查到映射”只是知道了去哪取，还没取。',
+    myth:'常见误解：以为 OverlayBD 是独立服务/数据库。它是链接进 daemon 的一个库（OverlayBD 的 BD = 块设备）。',
+    state:{'逻辑偏移':'0x4000 × 512','命中层':'upper（假设）','层内偏移':'0x1A2000','是否跨段':'否'} },
+
+  { node:'st-obd', title:'⑩ 取字节：命中缓存，或真的读盘',
+    kv:[['执行主体','OverlayBD → 后端（本地文件 / 远端）'],
+        ['动作','命中缓存则直接拷；否则 <span class="mono">pread</span> 层文件对应位置'],
+        ['关键点','<b>只有这一步才产生真正的 IO</b>；缓存命中时可能一次磁盘读都没有'],
+        ['所在层','宿主用户态 → 存储']],
+    done:'“字节到 buffer”= 数据侧完成。但原块请求还没回报完成。',
+    myth:'常见误解：以为请求 4 KiB 就一定读 4 KiB 盘。可能命中缓存，也可能因对齐/跨段读更多。',
+    state:{'缓存':'命中（假设）','实际磁盘读':'0 B','buffer':'4096 B 就绪'} },
+
+  { node:'st-daemon', title:'⑪ daemon 提交完成，顺带领取下一个',
+    kv:[['执行主体','ublk-daemon'],
+        ['动作','提交 <span class="mono">COMMIT_AND_FETCH_REQ</span>：报告 tag=7 完成 + 挂上下一次“有活给我”'],
+        ['注意','合并成一条命令 <b>不代表</b>下一个请求已经处理完'],
+        ['所在层','宿主用户态 → 宿主内核']],
+    done:'这一步完成 = daemon 侧交差。原块请求此时才在内核侧被完成。',
+    myth:'常见误解：把“提交完成”和“Guest 拿到数据”当同一件事。中间还隔着 Firecracker 和 VirtIO。',
+    state:{'提交':'tag=7 完成','新挂':'FETCH_REQ（等待中）','内核侧':'原块请求完成'} },
+
+  { node:'st-ublk', title:'⑫ 内核完成块请求 → Firecracker 的 CQE 到达',
+    kv:[['执行主体','宿主内核 → Firecracker（io_uring 完成）'],
+        ['动作','Firecracker 收到后端读取的完成事件，数据在它的缓冲区里'],
+        ['所在层','宿主内核 → 宿主用户态']],
+    done:'Firecracker 拿到数据。Guest 还不知道。',
+    myth:'常见误解：以为数据会自动出现在 Guest 内存里。需要 Firecracker 显式写进去。',
+    state:{'Firecracker 缓冲':'4096 B','Guest buffer':'尚未填充'} },
+
+  { node:'st-virtio', title:'⑬ Firecracker 把数据写进 Guest 的 buffer，发布 used',
+    kv:[['执行主体','Firecracker 设备模型'],
+        ['动作','把 4 KiB 拷到描述符指向的 Guest RAM（GPA→HVA 换算）→ 更新 used ring → 必要时触发中断'],
+        ['关键点','used 记录表示“设备侧完成”，不代表 Guest 驱动已处理'],
+        ['所在层','宿主用户态 → Guest RAM（共享内存）']],
+    done:'“发布 used”只是设备侧交差。',
+    myth:'常见误解：把“发布 used”当成“应用 read() 返回了”。中间还差一次 Guest 驱动处理。',
+    state:{'used tail':'1','中断':'已注入（假设）','Guest 页缓存':'将被填充'} },
+
+  { node:'st-vfs', title:'⑭ Guest 驱动与文件系统收尾',
+    kv:[['执行主体','Guest VirtIO 驱动 → 文件系统 → VFS'],
+        ['动作','处理 used 记录 → 把 buffer 挂进页缓存 → 唤醒等待的读'],
+        ['所在层','Guest 内核']],
+    done:'页缓存有数据了，进程可以被唤醒。',
+    myth:'常见误解：以为 Guest 里能看到“宿主那一堆层”。Guest 只看到自己的页缓存。',
+    state:{'页缓存':'已填充 4096 B','等待队列':'唤醒'} },
+
+  { node:'st-app', title:'⑮ read() 返回 4096',
+    kv:[['执行主体','Guest 用户态进程'],
+        ['动作','内核把页缓存的数据拷到用户缓冲区，返回字节数'],
+        ['关键点','返回 4096 表示“读到了 4096 字节”，不表示底层一定发生了磁盘读'],
+        ['所在层','Guest']],
+    done:'应用侧完成。',
+    myth:'常见误解：把返回值当成“数据落盘成功”之类的语义。读操作与持久化无关。',
+    state:{'返回值':'4096','总耗时':'（待实测）','磁盘 IO':'0（缓存命中假设）'} }
+];
+
+let i = 0, timer = null;
+const $ = id => document.getElementById(id);
+const nodes = ['st-app','st-vfs','st-virtio','st-fc','st-ublk','st-daemon','st-obd','st-disk'];
+
+function render(){
+  nodes.forEach(n => $(n).classList.remove('on'));
+  const s = steps[i];
+  $(s.node).classList.add('on');
+  $('card').innerHTML = '<h2>' + s.title + '</h2>' +
+    '<div class="kv">' + s.kv.map(([k,v]) => '<div><b>' + k + '</b>：' + v + '</div>').join('') + '</div>' +
+    '<div class="done"><b>这一步的“完成”意味着：</b>' + s.done + '</div>' +
+    '<div class="myth"><b>' + s.myth + '</b></div>';
+  $('state').innerHTML = Object.entries(s.state).map(([k,v]) => k + ' = <b>' + v + '</b>').join('　|　');
+  $('prog').textContent = '第 ' + (i+1) + ' 步 / 共 ' + steps.length + ' 步';
+  $('prev').disabled = i === 0;
+  $('next').disabled = i === steps.length - 1;
+}
+function go(n){ i = Math.max(0, Math.min(steps.length-1, n)); render(); }
+$('next').onclick = ()=>go(i+1);
+$('prev').onclick = ()=>go(i-1);
+$('reset').onclick = ()=>{ stop(); go(0); };
+$('play').onclick = ()=>{
+  if (timer){ stop(); return; }
+  if (i === steps.length-1) go(0);
+  $('play').textContent = '暂停';
+  timer = setInterval(()=>{ if (i>=steps.length-1) stop(); else go(i+1); }, 3200);
+};
+function stop(){ if (timer){ clearInterval(timer); timer=null; } $('play').textContent='播放'; }
+document.addEventListener('keydown', e=>{
+  if (e.key==='ArrowRight'){ stop(); go(i+1); }
+  if (e.key==='ArrowLeft'){ stop(); go(i-1); }
+});
+render();
+</script>
+</body>
+</html>

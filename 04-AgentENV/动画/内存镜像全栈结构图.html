@@ -1,0 +1,168 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>内存镜像全栈结构图：谁拥有、共享什么、谁能写</title>
+<style>
+  :root { --bg:#0f1216; --panel:#171c22; --line:#2b333d; --text:#e6edf3; --dim:#8b98a5;
+          --stor:#db6d28; --kern:#d29922; --user:#2ea043; --guest:#1f6feb; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--text);
+         font-family:"Microsoft YaHei","Segoe UI",system-ui,sans-serif; }
+  .wrap { max-width:1080px; margin:0 auto; padding:18px 18px 30px; }
+  h1 { font-size:17px; margin:0 0 4px; font-weight:600; }
+  .sub { color:var(--dim); font-size:12px; line-height:1.7; margin-bottom:12px; }
+  .legend { display:flex; gap:14px; flex-wrap:wrap; font-size:11px; color:var(--dim); margin-bottom:12px; }
+  .legend i { display:inline-block; width:10px; height:10px; border-radius:2px; margin-right:4px; }
+  .band { border:1px solid var(--line); border-radius:8px; padding:10px 12px; margin-bottom:8px; background:var(--panel); }
+  .band .tag { font-size:11px; letter-spacing:.5px; color:var(--dim); margin-bottom:8px; }
+  .arrow { text-align:center; color:var(--dim); font-size:11px; margin:2px 0 6px; letter-spacing:1px; }
+  .grid { display:grid; gap:8px; }
+  .g2 { grid-template-columns:1fr 1fr; }
+  .g3 { grid-template-columns:1fr 1fr 1fr; }
+  .g4 { grid-template-columns:repeat(4,1fr); }
+  .node { border:1px solid var(--line); border-radius:6px; padding:7px 9px; font-size:12.5px;
+          cursor:pointer; transition:all .2s; line-height:1.5; }
+  .node:hover { border-color:#58a6ff; transform:translateY(-1px); }
+  .node.on { border-color:#58a6ff; background:#1f6feb22; }
+  .node.stor { border-left:3px solid var(--stor); }
+  .node.kern { border-left:3px solid var(--kern); }
+  .node.user { border-left:3px solid var(--user); }
+  .node.guest{ border-left:3px solid var(--guest); }
+  .node .m { font-family:Consolas,monospace; font-size:11.5px; color:#a5b3c0; }
+  .badge { display:inline-block; font-size:10px; padding:1px 5px; border-radius:8px;
+           border:1px solid var(--line); color:var(--dim); margin-left:4px; }
+  .badge.share { border-color:#2ea043; color:#7ee787; }
+  .badge.excl  { border-color:#f0883e; color:#ffa657; }
+  .badge.ro    { border-color:#58a6ff; color:#79c0ff; }
+  .badge.rw    { border-color:#a371f7; color:#d2a8ff; }
+  .panel { border-left:3px solid #58a6ff; background:#0d1117; border-radius:4px;
+           padding:12px 14px; margin-top:14px; min-height:132px; font-size:13px; line-height:1.8; }
+  .panel h3 { margin:0 0 6px; font-size:14px; }
+  .panel .kv { color:var(--dim); }
+  .panel .kv b { color:var(--text); font-weight:600; }
+  .models { margin-top:14px; border:1px dashed var(--line); border-radius:6px; padding:10px 12px; font-size:12px; line-height:1.8; color:var(--dim); }
+  .models b { color:var(--text); }
+  .mono { font-family:Consolas,monospace; font-size:12px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>内存镜像全栈结构图：谁拥有、共享什么、谁能写</h1>
+  <div class="sub">
+    点任意方块看它的归属与共享性。图里同时画了<b>两个沙箱实例</b>，用来对照“共享只读底座 / 各自私有层”。
+  </div>
+
+  <div class="legend">
+    <span><i style="background:#db6d28"></i>存储层（持久）</span>
+    <span><i style="background:#d29922"></i>宿主内核</span>
+    <span><i style="background:#2ea043"></i>宿主用户态</span>
+    <span><i style="background:#1f6feb"></i>Guest</span>
+    <span>共享 = 多实例同一份 &nbsp;|&nbsp; 独占 = 每实例一份 &nbsp;|&nbsp; 只读 / 可写</span>
+  </div>
+
+  <!-- 存储层 -->
+  <div class="band">
+    <div class="tag">存储层（跨实例、跨节点持久）</div>
+    <div class="grid g4">
+      <div class="node stor" data-k="remote">远端对象存储<span class="badge share">共享</span><div class="m">慢，按块取</div></div>
+      <div class="node stor" data-k="base">基层：模板内存镜像<span class="badge share">共享</span><span class="badge ro">只读</span><div class="m">模板构建时产生</div></div>
+      <div class="node stor" data-k="inc">增量层（快照 diff）<span class="badge share">共享</span><span class="badge ro">只读</span><div class="m">每次快照一层</div></div>
+      <div class="node stor" data-k="priv">私有层 A / B<span class="badge excl">独占</span><span class="badge rw">可写</span><div class="m">COW 写这里</div></div>
+    </div>
+  </div>
+
+  <div class="arrow">▲ &nbsp;块请求（第几块 / 多长，经 io_uring）&nbsp; ▼</div>
+
+  <!-- 宿主内核 -->
+  <div class="band">
+    <div class="tag">宿主内核（同一台机器，所有实例共用这个内核）</div>
+    <div class="grid g4">
+      <div class="node kern" data-k="pcache">page cache<span class="badge share">共享</span><span class="badge ro">可回收</span><div class="m">“文件/设备内容的副本”</div></div>
+      <div class="node kern" data-k="ublk">/dev/ublkbN<span class="badge ro">只读</span><div class="m">用户态块设备</div></div>
+      <div class="node kern" data-k="ept">EPT（GPA→HPA）<span class="badge excl">每 VM 一份</span><div class="m">KVM 建，硬件用</div></div>
+      <div class="node kern" data-k="cg">cgroup v2<span class="badge excl">每沙箱</span><div class="m">memory.max / cpu.max</div></div>
+    </div>
+  </div>
+
+  <div class="arrow">▲ &nbsp;缺页 → 发块读；不命中才去存储层 &nbsp; ▼</div>
+
+  <!-- 宿主用户态 -->
+  <div class="band">
+    <div class="tag">宿主用户态（这里是两个独立进程，不是一个进程里的两个对象）</div>
+    <div class="grid g3">
+      <div class="node user" data-k="daemon">ublk-daemon<span class="badge share">共享服务</span><div class="m">查索引、取块、填缓冲</div></div>
+      <div class="node user" data-k="fcA">Firecracker A<span class="badge excl">独占</span><div class="m">vmm + api + fc_vcpu i</div></div>
+      <div class="node user" data-k="fcB">Firecracker B<span class="badge excl">独占</span><div class="m">vmm + api + fc_vcpu i</div></div>
+    </div>
+    <div class="grid g3" style="margin-top:8px">
+      <div></div>
+      <div class="node user" data-k="ramA">Guest RAM A<span class="badge excl">独占</span><div class="m">HVA 区间 → 宿主物理页</div></div>
+      <div class="node user" data-k="ramB">Guest RAM B<span class="badge excl">独占</span><div class="m">HVA 区间 → 宿主物理页</div></div>
+    </div>
+  </div>
+
+  <div class="arrow">▲ &nbsp;KVM_RUN / VM-Exit（MMIO、EPT 缺页…）&nbsp; ▼</div>
+
+  <!-- Guest -->
+  <div class="band">
+    <div class="tag">Guest（各自一台虚拟机，互相不可见）</div>
+    <div class="grid g2">
+      <div class="node guest" data-k="gA">Guest A<span class="badge excl">独占</span><div class="m">自己的内核、进程表、PID 空间</div></div>
+      <div class="node guest" data-k="gB">Guest B<span class="badge excl">独占</span><div class="m">自己的内核、进程表、PID 空间</div></div>
+    </div>
+  </div>
+
+  <div class="panel" id="panel">
+    <h3>点上面任意一个方块</h3>
+    <div class="kv">每个方块会给出：<b>归属</b>（谁拥有）、<b>共享性</b>（多实例同一份还是各自一份）、<b>读写</b>、<b>数据单位</b>、<b>失效/回收条件</b>。</div>
+  </div>
+
+  <div class="models">
+    <b>已核验的模型（2026-11-16，固定提交 + FC 1.12.1）：</b><br>
+    同一快照模板的多个沙箱<b>共享同一个只读 ublk 设备</b>（<span class="mono">src/sandbox/ublk/device.rs:573-582</span> 注释原文：“share a single ublk device … the same Linux page cache”）
+    → 因此共享该设备在宿主内核里的<b>页缓存页</b>（file-backed、只读）<br>
+    → Firecracker 用 <span class="mono">MAP_PRIVATE</span> 映射这块后端（<span class="mono">firecracker/src/vmm/src/vstate/memory.rs:136</span>）
+    → 某个沙箱写这一页时才 <b>COW</b> 出私有匿名页，私有页不回写设备。<br>
+    <b>别再把两件事混起来：</b>「只读」讲的是能不能写；<span class="mono">mmap</span> 的 flags 讲的是共享还是 COW。
+    读同一页的两个实例<b>可能命中同一块物理页</b>；写完之后各自持有私有副本。
+  </div>
+</div>
+
+<script>
+const info = {
+  remote: ['远端对象存储','数据单位：块（4 KiB 为主）','归属：集群存储，不属于任何一台宿主。','共享：所有节点/实例可读同一份。','读写：只读（写入走新的层或私有层）。','回收：不会被回收，持久保存。'],
+  base: ['基层：模板内存镜像','数据单位：4 KiB 页组织成的逻辑块。','归属：模板产物，宿主只读打开。','共享：同一模板的所有沙箱共享这一份。','读写：只读——谁都不能改它，否则别的实例看到的内存就变了。','生效条件：与内核版本、设备布局、CPU 特性绑定，换环境基本不能复用。'],
+  inc: ['增量层（快照 diff）','数据单位：页/块，按 dirty 范围组织。','归属：某次快照的 diff。','共享：可被多个子实例共同作为父层。','读写：只读。','注意：dirty 列表不冻结内容，真正读取时才决定结果。'],
+  priv: ['私有层 A / B','归属：每个实例一份，互不可见。','共享：不共享。','读写：可写，COW 写进来。','回收：实例销毁时可丢弃。','一句话：Guest 的每一次“写”，最终落到这里。'],
+  pcache: ['page cache','是什么：宿主内核维护的“文件/块设备内容副本”。','归属：宿主内核，不属于任何进程。','共享：同一文件的同一页，多实例可共享。','可回收：内存压力下随时丢弃，因为下面还有源。','关键区分：它是“文件的副本”，不是“进程的堆”。'],
+  ublk: ['/dev/ublkbN','是什么：用户态块设备节点，内核对象。','归属：宿主内核创建，一个沙箱一块。','读写：只读（本用途）。','职责：只说“第几块、多长”，不懂文件格式。','数据传输：请求走 io_uring 队列交给 daemon。'],
+  ept: ['EPT（GPA→HPA）','归属：KVM 为每台 VM 建。','作用：Guest 物理地址 → 宿主物理地址的硬件翻译。','缺映射时：触发 VM-Exit，用户态拿到 KVM_EXIT_MMIO。','注意：EPT 不是 memslot；memslot 是软件登记，EPT 是硬件表。'],
+  cg: ['cgroup v2','归属：每个沙箱一个目录，如 /sys/fs/cgroup/…/sbx-<id>。','关键：memory.max 触发时杀的是整个 Firecracker 进程（整台 VM）。','易错：pids.max 只数宿主 task，挡不住 Guest 内 fork。'],
+  daemon: ['ublk-daemon','归属：宿主用户态进程，通常全机一个（共享服务）。','职责：收块请求 → 查 OverlayBD 索引 → 取数据 → 填缓冲 → 提交完成。','只有它知道文件格式。','数据单位：块。'],
+  fcA: ['Firecracker A（宿主进程）','归属：一个沙箱一个进程，独占。','内部线程：vmm 主线程、api 线程、fc_vcpu 0..N-1。','seccomp：按线程类别装白名单（vmm/api/vcpu 三组）。','真正跑 Guest 指令的地方：vCPU 线程里的 ioctl(KVM_RUN)。'],
+  fcB: ['Firecracker B（宿主进程）','同 A，完全独立的进程与地址空间。','A 与 B 之间没有任何共享内存（除非走共享存储）。'],
+  ramA: ['Guest RAM A','归属：Firecracker A 进程地址空间里的 mmap 区间（HVA）。','共享：只读部分是共享页缓存页（与 B 可能同一物理页）；写过的页是 A 的私有匿名页。','映射：宿主页表把它映射到真实物理页；KVM 用 memslot + EPT 把它暴露给 Guest。','惰性：mmap 建立映射不等于占用物理内存。','依据：FC 1.12.1 memory.rs:136 用 MAP_PRIVATE 映射后端。'],
+  ramB: ['Guest RAM B','同 A：只读部分与 A 共享页缓存，写过之后各自私有。'],
+  gA: ['Guest A','归属：由 Firecracker A + KVM 运行的一台虚拟机。','能看到的：自己的地址空间、自己的进程表、自己的 PID 空间。','看不到：宿主进程、别的 Guest、镜像层结构。'],
+  gB: ['Guest B','同 A。两台 Guest 之间没有共享内存，也没有互相可见的进程。']
+};
+document.querySelectorAll('.node').forEach(n => {
+  n.addEventListener('click', () => {
+    document.querySelectorAll('.node').forEach(x => x.classList.remove('on'));
+    n.classList.add('on');
+    const d = info[n.dataset.k];
+    if (!d) return;
+    const [title, ...rows] = d;
+    document.getElementById('panel').innerHTML =
+      '<h3>' + title + '</h3>' +
+      rows.map(r => {
+        const i = r.indexOf('：');
+        if (i < 0) return '<div class="kv">' + r + '</div>';
+        return '<div class="kv"><b>' + r.slice(0, i) + '</b>：' + r.slice(i + 1) + '</div>';
+      }).join('');
+  });
+});
+</script>
+</body>
+</html>

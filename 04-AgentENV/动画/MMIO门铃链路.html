@@ -1,0 +1,197 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>一次 MMIO 门铃：Guest 写设备寄存器到宿主处理完</title>
+<style>
+  :root { --bg:#0f1216; --panel:#171c22; --line:#2b333d; --text:#e6edf3; --dim:#8b98a5;
+          --guest:#1f6feb; --hw:#8957e5; --kern:#d29922; --user:#2ea043; --net:#db6d28; }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--text);
+         font-family:"Microsoft YaHei","Segoe UI",system-ui,sans-serif; }
+  .wrap { max-width: 960px; margin: 0 auto; padding: 20px 20px 40px; }
+  h1 { font-size:18px; font-weight:600; margin:0 0 4px; }
+  .sub { color:var(--dim); font-size:12px; margin-bottom:16px; line-height:1.6; }
+  .lane { border:1px solid var(--line); border-radius:8px; padding:10px 12px;
+          margin-bottom:10px; background:var(--panel); transition: box-shadow .25s, border-color .25s; }
+  .lane.active { border-color:#58a6ff; box-shadow:0 0 0 2px rgba(88,166,255,.25); }
+  .lane .tag { font-size:11px; color:var(--dim); letter-spacing:.5px; margin-bottom:8px; }
+  .row { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
+  .box { border:1px solid var(--line); border-radius:6px; padding:6px 10px; font-size:13px;
+         position:relative; transition: all .25s; }
+  .box.guest { border-color:#1f6feb66; } .box.hw { border-color:#8957e566; }
+  .box.kern { border-color:#d2992266; } .box.user { border-color:#2ea04366; } .box.net { border-color:#db6d2866; }
+  .box.hot { background:#1f6feb22; border-color:#58a6ff; transform: translateY(-1px); }
+  .box.dead { opacity:.45; }
+  .arrow { color:var(--dim); font-size:14px; }
+  .mono { font-family:Consolas,"Courier New",monospace; font-size:12px; }
+  .state { margin-top:6px; font-size:12px; color:var(--dim); line-height:1.7; }
+  .state b { color:#e6edf3; font-weight:600; }
+  .cap { border-left:3px solid #58a6ff; background:#0d1117; border-radius:4px;
+         padding:10px 14px; font-size:13px; line-height:1.75; min-height:74px; }
+  .cap .no { color:#58a6ff; font-weight:600; margin-right:6px; }
+  .bar { display:flex; gap:8px; align-items:center; margin:14px 0 10px; }
+  button { background:#21262d; color:var(--text); border:1px solid var(--line); border-radius:6px;
+           padding:6px 14px; font-size:13px; cursor:pointer; }
+  button:hover { border-color:#58a6ff; }
+  button:disabled { opacity:.4; cursor:default; }
+  .prog { margin-left:auto; font-size:12px; color:var(--dim); }
+  .hint { color:var(--dim); font-size:11px; margin-top:16px; line-height:1.7; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>一次 MMIO 门铃：从 Guest 的 <span class="mono">mov</span> 到宿主处理完</h1>
+  <div class="sub">
+    静态演示，不是真实 trace 回放。强调三件事：普通指令靠 <b>EPT 缺映射</b> 触发退出；退出是<b>硬件</b>做的；宿主靠
+    <span class="mono">kvm_run-&gt;exit_reason</span> 分流。开销数字属量级，需实测。
+  </div>
+
+  <div class="lane" id="lane-guest">
+    <div class="tag">GUEST 虚拟机内部（Guest 内核 + 用户态）</div>
+    <div class="row">
+      <div class="box guest" id="b-app">用户程序</div>
+      <div class="arrow">→</div>
+      <div class="box guest" id="b-gpt">Guest 页表 GVA→GPA</div>
+      <div class="arrow">→</div>
+      <div class="box guest" id="b-gpa">GPA <span class="mono">0xFEE00000</span></div>
+    </div>
+    <div class="state" id="s-guest"></div>
+  </div>
+
+  <div class="lane" id="lane-hw">
+    <div class="tag">硬件（CPU 非根模式 + 二级页表）</div>
+    <div class="row">
+      <div class="box hw" id="b-ept">EPT GPA→HPA（这一段<b>故意不建</b>）</div>
+      <div class="arrow">→</div>
+      <div class="box hw" id="b-vmcs">VMCS 保存现场</div>
+      <div class="arrow">→</div>
+      <div class="box kern" id="b-reason">exit_reason</div>
+    </div>
+    <div class="state" id="s-hw"></div>
+  </div>
+
+  <div class="lane" id="lane-kern">
+    <div class="tag">宿主内核（KVM，根模式）</div>
+    <div class="row">
+      <div class="box kern" id="b-slot">查 memslot：未命中 → 判定 MMIO</div>
+      <div class="arrow">→</div>
+      <div class="box kern" id="b-kvmrun">填 <span class="mono">kvm_run-&gt;mmio</span></div>
+      <div class="arrow">→</div>
+      <div class="box kern" id="b-ret">KVM_RUN 返回用户态</div>
+    </div>
+    <div class="state" id="s-kern"></div>
+  </div>
+
+  <div class="lane" id="lane-user">
+    <div class="tag">宿主用户态（Firecracker 一个进程，N 个线程）</div>
+    <div class="row">
+      <div class="box user" id="b-fc">run_emulation → MmioWrite</div>
+      <div class="arrow">→</div>
+      <div class="box user" id="b-bus">mmio_bus.write</div>
+      <div class="arrow">→</div>
+      <div class="box user" id="b-vq">virtqueue avail 环 → 取描述符</div>
+      <div class="arrow">→</div>
+      <div class="box net" id="b-tap">写 TAP fd → 宿主网络</div>
+    </div>
+    <div class="state" id="s-user"></div>
+  </div>
+
+  <div class="bar">
+    <button id="prev">上一步</button>
+    <button id="next">下一步</button>
+    <button id="play">播放</button>
+    <button id="reset">重置</button>
+    <span class="prog" id="prog"></span>
+  </div>
+
+  <div class="cap" id="cap"></div>
+
+  <div class="hint">
+    关键对照：<span class="mono">mov</span>（普通写）→ EPT 缺映射 → 硬件 VM-Exit；<br>
+    而 <span class="mono">in/out</span>（敏感指令）→ 直接被 VMCS 拦下 → 宿主看到 <span class="mono">KVM_EXIT_IO</span>，是另一条路。
+  </div>
+</div>
+
+<script>
+const steps = [
+  { hot:['b-app'], lane:'lane-guest',
+    cap:'① Guest 用户态执行一条普通的写指令：<span class="mono">mov [0xFEE00000], 1</span>。它不是特权指令，CPL 不会变，也看不到任何“设备”存在。',
+    st:{'s-guest':'准备写地址 <b>0xFEE00000</b>，这被当作普通内存写。'} },
+
+  { hot:['b-gpt','b-gpa'], lane:'lane-guest',
+    cap:'② Guest 页表把 GVA 翻译成 GPA = <span class="mono">0xFEE00000</span>。在 Guest 眼里，这就是一块可用内存。',
+    st:{'s-guest':'已完成 GVA→GPA，得到 <b>GPA 0xFEE00000</b>。'} },
+
+  { hot:['b-ept'], lane:'lane-hw',
+    cap:'③ CPU 继续做第二次翻译：GPA→HPA 走 EPT。VMM 故意把这一段 GPA 的 EPT 项留空，于是翻译失败。',
+    st:{'s-guest':'已完成 GVA→GPA，得到 <b>GPA 0xFEE00000</b>。',
+        's-hw':'EPT 中这一项<b>没有映射</b> → 翻译缺页。'} },
+
+  { hot:['b-vmcs','b-reason'], lane:'lane-hw',
+    cap:'④ 硬件自动处理：把 Guest 寄存器现场写进 VMCS 的 guest-state，记录退出原因与 exit qualification，再载入宿主状态切到根模式。全程硬件“先斩后奏”，不是软件主动发起。',
+    st:{'s-hw':'VM-Exit 已触发：<b>EXIT_REASON_EPT_VIOLATION</b>（写访问）。'} },
+
+  { hot:['b-slot','b-kvmrun','b-ret'], lane:'lane-kern',
+    cap:'⑤ KVM 在根模式接手：查这段 GPA 落在哪个 memslot，<b>未命中</b> → 判定为 MMIO，把地址、长度、读写方向、数据填进 <span class="mono">kvm_run-&gt;mmio</span>，然后从 <span class="mono">KVM_RUN</span> 返回用户态。',
+    st:{'s-hw':'VM-Exit 已触发：<b>EXIT_REASON_EPT_VIOLATION</b>（写访问）。',
+        's-kern':'对用户态暴露的退出原因：<b>KVM_EXIT_MMIO</b>（注意与硬件原因不是同一个词）。'} },
+
+  { hot:['b-fc','b-bus'], lane:'lane-user',
+    cap:'⑥ Firecracker 的 vCPU 线程从 <span class="mono">ioctl(KVM_RUN)</span> 返回，按 <span class="mono">exit_reason</span> 分流到 <span class="mono">MmioWrite</span> 分支，调用 <span class="mono">mmio_bus.write(addr, data)</span> —— 值被写进 virtio-mmio 的队列通知寄存器。',
+    st:{'s-kern':'对用户态暴露的退出原因：<b>KVM_EXIT_MMIO</b>。',
+        's-user':'正在模拟这次 MMIO 写：<b>敲响队列门铃</b>。'} },
+
+  { hot:['b-vq'], lane:'lane-user',
+    cap:'⑦ virtio 后端被“叫醒”：它到 Guest RAM 里读 avail 环，取出一条描述符链（要发的那个包），不是靠通知带数据 —— 通知只说“有活”。',
+    st:{'s-user':'已取到描述符链，准备发送。'} },
+
+  { hot:['b-tap'], lane:'lane-user',
+    cap:'⑧ 后端把帧写到 TAP fd。从宿主内核看，就是 tap0 收到一帧，后续路由、NAT、过滤照常。',
+    st:{'s-user':'帧已交给 <b>TAP</b>，进入宿主网络栈。'} },
+
+  { hot:['b-fc','b-ret'], lane:'lane-kern',
+    cap:'⑨ 处理完返回 Handled，循环重新 <span class="mono">ioctl(KVM_RUN)</span>。这条 MMIO 写不需要 VMM 自己改 RIP —— 下一次进入内核时 KVM 会完成该指令并前进 RIP，Guest 继续跑。',
+    st:{'s-kern':'回到 <b>KVM_RUN</b>，Guest 继续执行。',
+        's-user':'处理完毕。'} }
+];
+
+let i = 0, timer = null;
+const $ = id => document.getElementById(id);
+const allBoxes = () => document.querySelectorAll('.box');
+const allLanes = () => document.querySelectorAll('.lane');
+
+function render() {
+  allBoxes().forEach(b => b.classList.remove('hot','dead'));
+  allLanes().forEach(l => l.classList.remove('active'));
+  ['s-guest','s-hw','s-kern','s-user'].forEach(id => { $(id).innerHTML=''; });
+
+  const s = steps[i];
+  s.hot.forEach(id => $(id).classList.add('hot'));
+  $(s.lane).classList.add('active');
+  Object.entries(s.st || {}).forEach(([id, html]) => { $(id).innerHTML = html; });
+  $('cap').innerHTML = '<span class="no">' + (i+1) + '/' + steps.length + '</span>' + s.cap;
+  $('prog').textContent = '第 ' + (i+1) + ' 步 / 共 ' + steps.length + ' 步';
+  $('prev').disabled = i === 0;
+  $('next').disabled = i === steps.length - 1;
+}
+
+function go(n) { i = Math.max(0, Math.min(steps.length-1, n)); render(); }
+$('next').onclick = () => go(i+1);
+$('prev').onclick = () => go(i-1);
+$('reset').onclick = () => { stop(); go(0); };
+$('play').onclick = () => {
+  if (timer) { stop(); return; }
+  if (i === steps.length-1) go(0);
+  $('play').textContent = '暂停';
+  timer = setInterval(() => { if (i >= steps.length-1) stop(); else go(i+1); }, 2600);
+};
+function stop() { if (timer) { clearInterval(timer); timer = null; } $('play').textContent = '播放'; }
+document.addEventListener('keydown', e => {
+  if (e.key === 'ArrowRight') { stop(); go(i+1); }
+  if (e.key === 'ArrowLeft')  { stop(); go(i-1); }
+});
+render();
+</script>
+</body>
+</html>

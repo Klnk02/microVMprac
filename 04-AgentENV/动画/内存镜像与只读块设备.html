@@ -1,0 +1,198 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>内存镜像为什么是“只读块设备”：一层一层看</title>
+<style>
+  :root { --bg:#0f1216; --panel:#171c22; --line:#2b333d; --text:#e6edf3; --dim:#8b98a5; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--text);
+         font-family:"Microsoft YaHei","Segoe UI",system-ui,sans-serif; }
+  .wrap { max-width:1000px; margin:0 auto; padding:20px 20px 36px; }
+  h1 { font-size:18px; margin:0 0 4px; font-weight:600; }
+  .sub { color:var(--dim); font-size:12px; line-height:1.7; margin-bottom:14px; }
+  .stage { display:grid; grid-template-columns: 1fr 1fr 1.2fr; gap:10px; }
+  .col { border:1px solid var(--line); border-radius:8px; background:var(--panel); padding:10px 12px; }
+  .col.active { border-color:#58a6ff; box-shadow:0 0 0 2px rgba(88,166,255,.22); }
+  .tag { font-size:11px; color:var(--dim); letter-spacing:.5px; margin-bottom:8px; }
+  .box { border:1px solid var(--line); border-radius:6px; padding:7px 9px; font-size:13px; margin-bottom:8px; }
+  .box.hot { background:#1f6feb22; border-color:#58a6ff; }
+  .box .mono, .mono { font-family:Consolas,monospace; font-size:12px; }
+  .note { font-size:11px; color:var(--dim); line-height:1.6; margin-top:4px; }
+  .pages { display:grid; grid-template-columns:repeat(4,1fr); gap:6px; margin-top:4px; }
+  .pg { height:38px; border:1px solid var(--line); border-radius:4px; display:flex;
+        align-items:center; justify-content:center; font-size:11px; color:var(--dim); transition:all .3s; }
+  .pg.resident { background:#2ea04322; border-color:#2ea043; color:#7ee787; }
+  .pg.fault { background:#f0883e22; border-color:#f0883e; color:#ffa657; }
+  .pg.cow { background:#a371f722; border-color:#a371f7; color:#d2a8ff; }
+  .layers { display:flex; flex-direction:column; gap:6px; }
+  .layer { border:1px solid var(--line); border-radius:5px; padding:6px 8px; font-size:12px; }
+  .layer.hot { border-color:#58a6ff; background:#1f6feb18; }
+  .conn { text-align:center; color:var(--dim); font-size:12px; margin:6px 0; }
+  .cap { border-left:3px solid #58a6ff; background:#0d1117; border-radius:4px;
+         padding:10px 14px; font-size:13px; line-height:1.8; min-height:86px; margin-top:14px; }
+  .cap .no { color:#58a6ff; font-weight:600; margin-right:6px; }
+  .bar { display:flex; gap:8px; align-items:center; margin:12px 0 0; }
+  button { background:#21262d; color:var(--text); border:1px solid var(--line); border-radius:6px;
+           padding:6px 14px; font-size:13px; cursor:pointer; }
+  button:hover { border-color:#58a6ff; } button:disabled { opacity:.4; }
+  .prog { margin-left:auto; font-size:12px; color:var(--dim); }
+  .hint { color:var(--dim); font-size:11px; margin-top:14px; line-height:1.7; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>内存镜像为什么是“只读块设备”</h1>
+  <div class="sub">
+    一句话：4 GiB 的内存快照被做成一盘<b>只读光盘</b>，Guest 的 RAM 只是这张盘的投影。碰到没读过的页，内核就去盘上取那一块。<br>
+    左边是 Guest 看到的页（格子），中间是内核视角的 ublk 设备，右边是用户态 daemon 与层叠存储。
+  </div>
+
+  <div class="stage">
+    <div class="col" id="c-guest">
+      <div class="tag">GUEST 视角：这只是“我的 4 GiB 内存”</div>
+      <div class="pages" id="pages"></div>
+      <div class="note" id="n-guest">灰 = 还没驻留在宿主 RAM 里</div>
+    </div>
+
+    <div class="col" id="c-kern">
+      <div class="tag">宿主内核：页表 + ublk 设备</div>
+      <div class="box" id="b-pte">宿主页表项：<span class="mono">未建立</span></div>
+      <div class="box" id="b-null">缺页 → <span class="mono">do_page_fault</span></div>
+      <div class="box" id="b-ublk">/dev/ublkb0 <span class="mono">(只读)</span></div>
+      <div class="note" id="n-kern">内核不懂文件格式，只负责“第几块、多长”</div>
+    </div>
+
+    <div class="col" id="c-user">
+      <div class="tag">宿主用户态：daemon + 层叠存储</div>
+      <div class="box" id="b-daemon">ublk-daemon（收 io_uring 请求）</div>
+      <div class="layers">
+        <div class="layer" id="b-idx">OverlayBD 索引：逻辑块 → 哪一层</div>
+        <div class="layer" id="b-l2">私有可写层（COW 写这里）</div>
+        <div class="layer" id="b-l1">只读增量层</div>
+        <div class="layer" id="b-l0">只读基层（快照时的内存镜像）</div>
+        <div class="layer" id="b-remote">远端 / 本地缓存（可选）</div>
+      </div>
+      <div class="note" id="n-user">同一份只读基层可被多台实例共享</div>
+    </div>
+  </div>
+
+  <div class="bar">
+    <button id="prev">上一步</button>
+    <button id="next">下一步</button>
+    <button id="play">播放</button>
+    <button id="reset">重置</button>
+    <span class="prog" id="prog"></span>
+  </div>
+  <div class="cap" id="cap"></div>
+
+  <div class="hint">
+    诚实边界：ublk 是“内核把块请求交给用户态 daemon”的框架，这部分有官方文档支撑；
+    “VMM 具体怎么把这块设备变成 Guest RAM 的映射”（mmap 设备 / userfaultfd / 其它）我没有核对固定提交的实现，属机制级解释。
+  </div>
+</div>
+
+<script>
+/* 页状态：absent / fault / resident / cow */
+const steps = [
+  { hot:['b-l0','b-remote'], col:'c-user', pages:['absent','absent','absent','absent','absent','absent','absent','absent'],
+    cap:'① <b>快照那一刻</b>：4 GiB 内存被切成块，写进 OverlayBD 的层里（基层 + 之后可能叠加的增量层）。此时它只是存储上的一堆块。',
+    st:{'n-user':'层里存的是“逻辑块 → 层内位置”，还没有任何设备。'} },
+
+  { hot:['b-ublk'], col:'c-kern', pages:['absent','absent','absent','absent','absent','absent','absent','absent'],
+    cap:'② <b>恢复时</b>：这份镜像被当作<b>只读块设备</b>暴露出来，例如 <span class="mono">/dev/ublkb0</span>。它看起来像一块硬盘，但背后是 OverlayBD。',
+    st:{'n-kern':'设备节点已创建，只读。内核只知道“块号与长度”。'} },
+
+  { hot:['b-pte'], col:'c-kern', pages:['absent','absent','absent','absent','absent','absent','absent','absent'],
+    cap:'③ VMM 把它映射成 Guest RAM 的地址空间。<b>注意：此时只是“有映射”，一个字节都还没读。</b>所以恢复很快就“成功”了。',
+    st:{'n-guest':'格子全是灰的：Guest 以为自己有 4 GiB，实际宿主 RAM 里几乎没有。',
+        'n-kern':'映射已建立，页表项还没有指向真实页。'} },
+
+  { hot:['b-null'], col:'c-kern', pages:['absent','absent','fault','absent','absent','absent','absent','absent'],
+    cap:'④ Guest 执行时第一次访问某页（比如第 3 个格子）→ 宿主页表缺页。这才是真正要取数据的那一刻。',
+    st:{'n-guest':'第 3 页正在被访问，但宿主 RAM 里没有它。'} },
+
+  { hot:['b-ublk','b-daemon'], col:'c-kern', pages:['absent','absent','fault','absent','absent','absent','absent','absent'],
+    cap:'⑤ 内核向 <span class="mono">/dev/ublkb0</span> 发“读第 X 块”。请求不走普通 syscall 传数据，而是通过 <span class="mono">io_uring</span> 队列交给用户态 daemon。',
+    st:{'n-kern':'已发出块读请求：<b>块号 + 长度</b>。'} },
+
+  { hot:['b-idx','b-l0','b-remote'], col:'c-user', pages:['absent','absent','fault','absent','absent','absent','absent','absent'],
+    cap:'⑥ daemon 查索引：这一块在<b>哪一层</b>？然后从本地缓存或远端把数据取出来。这层才是“知道文件格式”的环节。',
+    st:{'n-user':'索引命中基层；远端/缓存视情况决定要不要真下载。'} },
+
+  { hot:['b-pte'], col:'c-kern', pages:['absent','absent','resident','absent','absent','absent','absent','absent'],
+    cap:'⑦ 数据回填 → 页装好 → 页表项指向真实页 → Guest 继续执行。这一页从此驻留，下次访问不再缺页。',
+    st:{'n-guest':'第 3 页已驻留（绿）。',
+        'n-kern':'页表项已建立，指向真实物理页。'} },
+
+  { hot:['b-l2'], col:'c-user', pages:['absent','absent','cow','absent','absent','absent','absent','absent'],
+    cap:'⑧ 如果 Guest 要<b>写</b>这一页：只读层不许改 → 触发 <b>COW</b>，把这一页复制到这台实例自己的私有可写层，然后改私有那份。',
+    st:{'n-guest':'第 3 页变成“私有副本”（紫）。共享的基层没被碰过。',
+        'n-user':'私有层记录这一页的新内容；基层仍然只读。'} },
+
+  { hot:['b-l0','b-l2'], col:'c-user', pages:['absent','resident','cow','absent','resident','absent','absent','absent'],
+    cap:'⑨ 两台从同一快照恢复的 VM：<b>共用一份只读基层</b>，各自有私有层。谁写谁复制，谁也改不了别人看到的内存 —— 这就是“必须只读”的理由。',
+    st:{'n-user':'共享只读基层 + 每实例私有层 = 隔离的写语义。'} }
+];
+
+const pgEls = [];
+(function buildPages(){
+  const box = document.getElementById('pages');
+  for (let i=1;i<=8;i++){
+    const d = document.createElement('div');
+    d.className = 'pg'; d.textContent = 'P' + i; d.id = 'pg' + i;
+    box.appendChild(d); pgEls.push(d);
+  }
+})();
+
+let i = 0, timer = null;
+const $ = id => document.getElementById(id);
+
+function render(){
+  document.querySelectorAll('.col').forEach(c=>c.classList.remove('active'));
+  document.querySelectorAll('.box,.layer').forEach(b=>b.classList.remove('hot'));
+  ['n-guest','n-kern','n-user'].forEach(id=>{ $(id).textContent=''; });
+
+  const s = steps[i];
+  $(s.col).classList.add('active');
+  s.hot.forEach(id => $(id) && $(id).classList.add('hot'));
+
+  pgEls.forEach((el, idx) => {
+    const st = s.pages[idx];
+    el.className = 'pg' + (st === 'absent' ? '' : ' ' + st);
+  });
+
+  // 默认提示
+  const defaults = {
+    'n-guest':'灰 = 还没驻留在宿主 RAM 里',
+    'n-kern':'内核不懂文件格式，只负责“第几块、多长”',
+    'n-user':'同一份只读基层可被多台实例共享'
+  };
+  Object.entries(defaults).forEach(([id,v]) => $(id).textContent = v);
+  Object.entries(s.st || {}).forEach(([id,v]) => $(id).innerHTML = v);
+
+  $('cap').innerHTML = '<span class="no">' + (i+1) + '/' + steps.length + '</span>' + s.cap;
+  $('prog').textContent = '第 ' + (i+1) + ' 步 / 共 ' + steps.length + ' 步';
+  $('prev').disabled = i === 0;
+  $('next').disabled = i === steps.length - 1;
+}
+
+function go(n){ i = Math.max(0, Math.min(steps.length-1, n)); render(); }
+$('next').onclick = ()=>go(i+1);
+$('prev').onclick = ()=>go(i-1);
+$('reset').onclick = ()=>{ stop(); go(0); };
+$('play').onclick = ()=>{
+  if (timer){ stop(); return; }
+  if (i === steps.length-1) go(0);
+  $('play').textContent = '暂停';
+  timer = setInterval(()=>{ if (i >= steps.length-1) stop(); else go(i+1); }, 3000);
+};
+function stop(){ if (timer){ clearInterval(timer); timer = null; } $('play').textContent='播放'; }
+document.addEventListener('keydown', e=>{
+  if (e.key === 'ArrowRight'){ stop(); go(i+1); }
+  if (e.key === 'ArrowLeft'){ stop(); go(i-1); }
+});
+render();
+</script>
+</body>
+</html>
