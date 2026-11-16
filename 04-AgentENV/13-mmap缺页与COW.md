@@ -164,6 +164,15 @@ KVM 建立 EPT 条目，返回 Guest 继续执行
 2. fork 后父子共享一页，父先写入，子随后读取——子读到的是原值还是新值？复制出的页属于谁？
 3. 两个实例从同一快照恢复并映射同一文件页，A 写入后，B 读同一位置会看到什么？原页现在归谁？
 
+## 11a. 核验补充（2026-11-16）：microVM 恢复用的就是 MAP_PRIVATE 文件映射
+
+第 3 题的正确答案由两部分支撑，现已对着源码核到具体行：
+
+- **共享**：同一快照模板的多个沙箱复用同一个只读 ublk 设备（`src/sandbox/ublk/device.rs:573-582`，注释明确写 “share a single ublk device … the same Linux page cache”），所以同一页只在宿主页缓存里存一份。
+- **私有写**：Firecracker `1.12.1` 的 `src/vmm/src/vstate/memory.rs:136` 用 `libc::MAP_PRIVATE` 映射该后端文件，所以写入时按本课第 5 节的 COW 时间线复制出私有匿名页，不影响另一个实例。
+
+一句话对照：**只读层讲「能不能写」，mmap flags 讲「共享还是 COW」——两件事不要混。** 详细核验表见 [第 18 课](18-从快照恢复.md#9-核验记录2026-11-16内存后端到底是匿名页还是共享页缓存)。
+
 ## 来源
 
 - [mmap(2)](https://man7.org/linux/man-pages/man2/mmap.2.html)
