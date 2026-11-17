@@ -257,6 +257,110 @@ function NewPage {
 
 function SavePage { param($page); $page.g.Dispose(); $page.bmp.Save($page.path, [System.Drawing.Imaging.ImageFormat]::Png); $page.bmp.Dispose() }
 
+
+# ---------------- 课件小部件 ----------------
+function Chip {
+  param($g, [double]$x, [double]$y, [string]$text, [string]$fg, [string]$bg, [double]$w = 0, [double]$h = 24)
+  $f = Font2 11.5 $true
+  if ($w -le 0) { $w = $g.MeasureString($text, $f).Width + 22 }
+  $f.Dispose()
+  Rect $g $x $y $w $h $bg $fg 1 12
+  $ff = Font2 11.5 $true; $b = Brush $fg
+  $tw = $g.MeasureString($text, $ff).Width
+  $g.DrawString($text, $ff, $b, [single]($x + ($w - $tw) / 2), [single]($y + 5))
+  $ff.Dispose(); $b.Dispose()
+  return $w
+}
+
+function StepCard {
+  param($g, [double]$x, [double]$y, [double]$w, [double]$h, [string]$num, [string]$title, [string]$detail, [string]$accent)
+  Rect $g $x $y $w $h '#FFFFFF' $C.line 1 10
+  Rect $g $x $y $w 4 $accent $null 0 2
+  $f = Font2 18 $true; $b = Brush $accent
+  $g.DrawString($num, $f, $b, [single]($x + 14), [single]($y + 10)); $f.Dispose(); $b.Dispose()
+  T $g $title ($x + 14) ($y + 38) 12.5 $C.ink $true ($w - 26) | Out-Null
+  T $g $detail ($x + 14) ($y + 64) 11.5 $C.body $false ($w - 26) | Out-Null
+}
+
+# 竖向条形图：items = @(@(label, value, displayText), ...)，maxV 用于归一化
+function BarsV {
+  param($g, [double]$x, [double]$y, [double]$w, [double]$h, $items, [double]$maxV, [string]$accent = '#047761')
+  $n = $items.Count
+  $slot = $w / $n
+  $bw = [Math]::Min(46, $slot * 0.5)
+  for ($i = 0; $i -lt $n; $i++) {
+    $it = $items[$i]
+    $v = [double]$it[1]
+    $bh = if ($maxV -gt 0) { ($v / $maxV) * ($h - 42) } else { 0 }
+    if ($bh -lt 2) { $bh = 2 }
+    $cx = $x + $slot * $i + ($slot - $bw) / 2
+    $by = $y + $h - 22 - $bh
+    Rect $g ($x + $slot * $i + 6) ($y + $h - 20) ($slot - 12) 3 $C.track $null 0 1.5
+    Rect $g $cx $by $bw $bh $accent $null 0 4
+    $f = Font2 11.5 $false; $b = Brush $C.body
+    $tw = $g.MeasureString($it[2], $f).Width
+    $g.DrawString($it[2], $f, $b, [single]($cx + ($bw - $tw) / 2), [single]($by - 17))
+    $f.Dispose(); $b.Dispose()
+    $f2 = Font2 11.5 $false; $b2 = Brush $C.dim
+    $lw = $g.MeasureString($it[0], $f2).Width
+    $g.DrawString($it[0], $f2, $b2, [single]($x + $slot * $i + ($slot - $lw) / 2), [single]($y + $h - 16))
+    $f2.Dispose(); $b2.Dispose()
+  }
+}
+
+# 单条堆叠条：items = @(@(label, share 0..1, color), ...)
+function StackBar {
+  param($g, [double]$x, [double]$y, [double]$w, [double]$h, $items)
+  $xx = $x
+  foreach ($it in $items) {
+    $sw = $w * [double]$it[1]
+    Rect $g $xx $y $sw $h $it[2] $null 0 3
+    $xx += $sw
+  }
+  $xx = $x
+  foreach ($it in $items) {
+    $sw = $w * [double]$it[1]
+    T $g $it[0] $xx ($y + $h + 3) 11.5 $C.body $false $sw | Out-Null
+    $xx += $sw
+  }
+}
+
+function MiniTable {
+  param($g, [double]$x, [double]$y, [double]$w, $header, $rows, [double]$rh = 26, [double]$fs = 12)
+  $n = $header.Count
+  $cw = $w / $n
+  for ($j = 0; $j -lt $n; $j++) {
+    Rect $g ($x + $j * $cw) $y $cw $rh $C.grayBg $C.line 1 4
+    T $g $header[$j] ($x + $j * $cw + 8) ($y + 6) $fs $C.ink $true ($cw - 16) | Out-Null
+  }
+  for ($i = 0; $i -lt $rows.Count; $i++) {
+    for ($j = 0; $j -lt $n; $j++) {
+      $bg = if ($i % 2 -eq 0) { '#FFFFFF' } else { $C.greenBg2 }
+      Rect $g ($x + $j * $cw) ($y + ($i + 1) * $rh) $cw $rh $bg $C.line 1 0
+      T $g $rows[$i][$j] ($x + $j * $cw + 8) ($y + ($i + 1) * $rh + 6) $fs $C.body ($j -eq 0) ($cw - 16) | Out-Null
+    }
+  }
+}
+
+function NumCard {
+  param($g, [double]$x, [double]$y, [double]$w, [double]$h, [string]$num, [string]$unit, [string]$cap, [string]$accent = '#047761')
+  Rect $g $x $y $w $h '#FFFFFF' $C.line 1 10
+  Rect $g $x $y 5 $h $accent $null 0 2
+  T $g $num ($x + 16) ($y + 12) 26 $accent $true ($w - 34) | Out-Null
+  if ($unit) { T $g $unit ($x + 16) ($y + 48) 12 $accent $false ($w - 34) | Out-Null }
+  T $g $cap ($x + 16) ($y + 68) 11.5 $C.body $false ($w - 34) | Out-Null
+}
+
+# 左侧图示面板：标题 + 绘图区 + 数据图标题 + 数据区
+function FigPanel {
+  param($g, [double]$x, [double]$y, [double]$w, [double]$h, [string]$figTitle, [string]$dataTitle)
+  Rect $g $x $y $w $h '#FFFFFF' $C.line 1 12
+  T $g $figTitle ($x + 16) ($y + 12) 12 $C.dim $true 400 | Out-Null
+  L $g ($x + 16) ($y + 0.52 * $h) ($x + $w - 16) ($y + 0.52 * $h) $C.line 1
+  T $g $dataTitle ($x + 16) ($y + 0.55 * $h) 12 $C.dim $true 400 | Out-Null
+}
+
+
 # ---------------- 内容 ----------------
 $ROOT = Split-Path -Parent $MyInvocation.MyCommand.Path
 $OUT = Join-Path (Split-Path -Parent $ROOT) '04-AgentENV\图片-30页'
